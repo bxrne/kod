@@ -1,0 +1,7 @@
+.codemogger/
+AGENTS.md
+*.o
+*.log
+tmp/
+.zig-cache/
+zig-out/
