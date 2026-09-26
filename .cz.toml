@@ -1,0 +1,10 @@
+[tool.commitizen]
+name = "cz_conventional_commits"
+version = "0.1.0"
+tag_format = "v$version"
+version_scheme = "semver"
+update_changelog_on_bump = true
+changelog_file = "CHANGELOG.md"
+# The version string appears once in build.zig.zon as `.version = "0.1.0"`,
+# so a bare filename entry bumps it with no extra pattern needed.
+version_files = ["build.zig.zon"]

@@ -1,0 +1,72 @@
+name: release
+
+# Conventional commits on main drive everything: commitizen bumps the
+# version, writes the changelog, and tags. Tags build release binaries.
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: mlugg/setup-zig@v2
+        with:
+          version: 0.16.0
+      - run: zig build test
+
+  bump:
+    needs: test
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.bump.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.x"
+      - run: pip install commitizen
+      - id: bump
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          if cz bump --yes --changelog; then
+            git push origin main --follow-tags
+            echo "tag=$(git describe --tags --abbrev=0 HEAD)" >> "$GITHUB_OUTPUT"
+          else
+            # No conventional feat/fix since the last tag: nothing to release.
+            echo "tag=" >> "$GITHUB_OUTPUT"
+          fi
+
+  release:
+    needs: bump
+    if: needs.bump.outputs.tag != ''
+    strategy:
+      matrix:
+        include:
+          - target: x86_64-linux
+            os: ubuntu-latest
+          - target: x86_64-macos
+            os: macos-latest
+          - target: aarch64-macos
+            os: macos-latest
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.bump.outputs.tag }}
+      - uses: mlugg/setup-zig@v2
+        with:
+          version: 0.16.0
+      - run: zig build -Dtarget=${{ matrix.target }} -Doptimize=ReleaseSafe
+      - run: tar -czf kod-${{ needs.bump.outputs.tag }}-${{ matrix.target }}.tar.gz -C zig-out/bin kod
+      - uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ needs.bump.outputs.tag }}
+          files: kod-${{ needs.bump.outputs.tag }}-${{ matrix.target }}.tar.gz
