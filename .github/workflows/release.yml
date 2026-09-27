@@ -1,10 +1,17 @@
 name: release
 
 # Conventional commits on main drive everything: commitizen bumps the
-# version, writes the changelog, and tags. Tags build release binaries.
+# version by a patch, writes the changelog, and tags. Tags build the
+# release binaries.
 on:
   push:
     branches: [main]
+
+# One push at a time. Two bumps racing on the same version would tag
+# the same release twice.
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
 
 permissions:
   contents: write
@@ -36,11 +43,23 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          if cz bump --yes --changelog; then
-            git push origin main --follow-tags
-            echo "tag=$(git describe --tags --abbrev=0 HEAD)" >> "$GITHUB_OUTPUT"
+          # Patch only. A `feat:` commit must never jump the minor
+          # line: the project stays inside 0.0.0 to 0.1.x.
+          if cz bump --yes --changelog --increment PATCH; then
+            # The tag follows the package version, and it is pushed by
+            # name. `--follow-tags` dropped it before, so the release
+            # job had no ref and no release was made.
+            ver=$(sed -n 's/.*\.version = "\([^"]*\)".*/\1/p' build.zig.zon | head -1)
+            if [ -z "$ver" ]; then
+              echo "no version in build.zig.zon" >&2
+              exit 1
+            fi
+            git tag -a "v$ver" -m "v$ver"
+            git push origin main
+            git push origin "v$ver"
+            echo "tag=v$ver" >> "$GITHUB_OUTPUT"
           else
-            # No conventional feat/fix since the last tag: nothing to release.
+            # No conventional commit since the last tag: nothing to release.
             echo "tag=" >> "$GITHUB_OUTPUT"
           fi
 
@@ -48,6 +67,7 @@ jobs:
     needs: bump
     if: needs.bump.outputs.tag != ''
     strategy:
+      fail-fast: false
       matrix:
         include:
           - target: x86_64-linux
@@ -65,8 +85,11 @@ jobs:
         with:
           version: 0.16.0
       - run: zig build -Dtarget=${{ matrix.target }} -Doptimize=ReleaseSafe
+      - run: zig build test -Dtarget=${{ matrix.target }}
       - run: tar -czf kod-${{ needs.bump.outputs.tag }}-${{ matrix.target }}.tar.gz -C zig-out/bin kod
       - uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ needs.bump.outputs.tag }}
+          name: kod ${{ needs.bump.outputs.tag }}
+          generate_release_notes: true
           files: kod-${{ needs.bump.outputs.tag }}-${{ matrix.target }}.tar.gz
